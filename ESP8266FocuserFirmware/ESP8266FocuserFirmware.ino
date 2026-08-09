@@ -226,11 +226,11 @@ function setState(s){
  $('link').textContent=s.isMoving?'正在移动':'就绪';
  $('hold').classList.toggle('active',!!s.hold);
  $('reverse').classList.toggle('active',!!s.reversed);
- $('stepsPerRev').value=s.stepsPerRev??8160;
+ if(document.activeElement!==$('stepsPerRev'))$('stepsPerRev').value=s.stepsPerRev??8160;
  if(document.activeElement!==$('maxStepsSetting'))$('maxStepsSetting').value=s.maxSteps??816000;
- $('maxSpeed').value=s.maxSpeed??800;
- $('acceleration').value=s.acceleration??1000;
- $('manualStep').value=s.manualStep??50;
+ if(document.activeElement!==$('maxSpeed'))$('maxSpeed').value=s.maxSpeed??800;
+ if(document.activeElement!==$('acceleration'))$('acceleration').value=s.acceleration??1000;
+ if(document.activeElement!==$('manualStep'))$('manualStep').value=s.manualStep??50;
  if(document.activeElement!==$('staSsid'))$('staSsid').value=s.staSsid||'';
  if(document.activeElement!==$('staIp'))$('staIp').value=s.staIp||'';
  if(document.activeElement!==$('staGateway'))$('staGateway').value=s.staGateway||'';
