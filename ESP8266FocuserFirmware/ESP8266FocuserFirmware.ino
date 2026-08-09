@@ -279,28 +279,32 @@ $('home').onclick=()=>api('/api/home',{}).then(setState);
 $('setZero').onclick=()=>api('/api/set-position',{steps:0}).then(setState);
 $('hold').onclick=()=>api('/api/settings',{hold:!state.hold}).then(setState);
 $('reverse').onclick=()=>api('/api/settings',{reversed:!state.reversed}).then(setState);
-$('saveSettings').onclick=async()=>{
- const body={
-  stepsPerRev:Number($('stepsPerRev').value),
-  maxSteps:Number($('maxStepsSetting').value),
-  maxSpeed:Number($('maxSpeed').value),
-  acceleration:Number($('acceleration').value),
-  manualStep:Number($('manualStep').value)
- };
- if($('staSsid').value.trim())body.staSsid=$('staSsid').value.trim();
- if($('staPassword').value)body.staPassword=$('staPassword').value;
- if($('staIp').value.trim())body.staIp=$('staIp').value.trim();
- if($('staGateway').value.trim())body.staGateway=$('staGateway').value.trim();
- if($('staSubnet').value.trim())body.staSubnet=$('staSubnet').value.trim();
- try{
-  setState(await api('/api/settings',body));
-  $('settingsMessage').textContent='设置已保存';
- }catch(e){
-  $('settingsMessage').textContent=e.code==='max_steps_below_position_or_target'
-   ?'保存失败：最大行程不能小于当前位置或当前目标位置'
-   :'保存失败，请检查输入值';
- }
-};
+function saveSettings(){
+ return (async()=>{
+  const body={
+   stepsPerRev:Number($('stepsPerRev').value),
+   maxSteps:Number($('maxStepsSetting').value),
+   maxSpeed:Number($('maxSpeed').value),
+   acceleration:Number($('acceleration').value),
+   manualStep:Number($('manualStep').value)
+  };
+  if($('staSsid').value.trim())body.staSsid=$('staSsid').value.trim();
+  if($('staPassword').value)body.staPassword=$('staPassword').value;
+  if($('staIp').value.trim())body.staIp=$('staIp').value.trim();
+  if($('staGateway').value.trim())body.staGateway=$('staGateway').value.trim();
+  if($('staSubnet').value.trim())body.staSubnet=$('staSubnet').value.trim();
+  try{
+   setState(await api('/api/settings',body));
+   $('settingsMessage').textContent='设置已保存';
+  }catch(e){
+   $('settingsMessage').textContent=e.code==='max_steps_below_position_or_target'
+    ?'保存失败：最大行程不能小于当前位置或当前目标位置'
+    :'保存失败，请检查输入值';
+  }
+ })();
+}
+$('saveSettings').onclick=saveSettings;
+document.querySelectorAll('.settings-panel input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSettings();}}));
 // 夜视红光模式，保存在浏览器本地存储中
 (function(){
  const night=localStorage.getItem('efucoser_night')==='1';
