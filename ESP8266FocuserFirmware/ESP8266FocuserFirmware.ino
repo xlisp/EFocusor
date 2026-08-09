@@ -204,7 +204,6 @@ input{width:100%;background:#121720;color:var(--text);border:1px solid var(--lin
 <script>
 const $=id=>document.getElementById(id);
 let state={};
-let dirtyFields=new Set();
 async function api(path,body){
  const opt=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
  const res=await fetch(path,opt);
@@ -216,6 +215,7 @@ async function api(path,body){
  }
  return data;
 }
+// 只更新仪表盘：位置、状态、温度、进度条、切换按钮、网络信息
 function setState(s){
  state=s;
  $('position').textContent=String(s.positionSteps??0);
@@ -227,17 +227,20 @@ function setState(s){
  $('link').textContent=s.isMoving?'正在移动':'就绪';
  $('hold').classList.toggle('active',!!s.hold);
  $('reverse').classList.toggle('active',!!s.reversed);
- if(!dirtyFields.has('stepsPerRev'))$('stepsPerRev').value=s.stepsPerRev??8160;
- if(!dirtyFields.has('maxStepsSetting'))$('maxStepsSetting').value=s.maxSteps??816000;
- if(!dirtyFields.has('maxSpeed'))$('maxSpeed').value=s.maxSpeed??800;
- if(!dirtyFields.has('acceleration'))$('acceleration').value=s.acceleration??1000;
- if(!dirtyFields.has('manualStep'))$('manualStep').value=s.manualStep??50;
- if(!dirtyFields.has('staSsid'))$('staSsid').value=s.staSsid||'';
- if(!dirtyFields.has('staIp'))$('staIp').value=s.staIp||'';
- if(!dirtyFields.has('staGateway'))$('staGateway').value=s.staGateway||'';
- if(!dirtyFields.has('staSubnet'))$('staSubnet').value=s.staSubnet||'';
  const staIp=s.staIp&&s.staIp!=='0.0.0.0'?s.staIp:'未连接';
  $('network').textContent='热点: '+(s.apIp||'192.168.4.1')+' | 联网: '+staIp+' | TCP: '+(s.tcpPort||4030);
+}
+// 仅初次加载和保存后填充设置表单，避免轮询覆盖用户编辑
+function loadSettingsForm(s){
+ $('stepsPerRev').value=s.stepsPerRev??8160;
+ $('maxStepsSetting').value=s.maxSteps??816000;
+ $('maxSpeed').value=s.maxSpeed??800;
+ $('acceleration').value=s.acceleration??1000;
+ $('manualStep').value=s.manualStep??50;
+ $('staSsid').value=s.staSsid||'';
+ $('staIp').value=s.staIp||'';
+ $('staGateway').value=s.staGateway||'';
+ $('staSubnet').value=s.staSubnet||'';
 }
 function renderMemories(data){
  const list=$('memoryList');
@@ -295,8 +298,9 @@ function saveSettings(){
   if($('staGateway').value.trim())body.staGateway=$('staGateway').value.trim();
   if($('staSubnet').value.trim())body.staSubnet=$('staSubnet').value.trim();
   try{
-   setState(await api('/api/settings',body));
-   dirtyFields.clear();
+   const s=await api('/api/settings',body);
+   setState(s);
+   loadSettingsForm(s);
    $('settingsMessage').textContent='设置已保存';
   }catch(e){
    $('settingsMessage').textContent=e.code==='max_steps_below_position_or_target'
@@ -306,10 +310,7 @@ function saveSettings(){
  })();
 }
 $('saveSettings').onclick=saveSettings;
-document.querySelectorAll('.settings-panel input').forEach(el=>{
- el.addEventListener('input',()=>dirtyFields.add(el.id));
- el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSettings();}});
-});
+document.querySelectorAll('.settings-panel input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSettings();}}));
 // 夜视红光模式，保存在浏览器本地存储中
 (function(){
  const night=localStorage.getItem('efucoser_night')==='1';
@@ -334,7 +335,7 @@ if(location.protocol==='file:'){
  $('link').textContent='本地预览';
 }else{
  connectWs();
- refresh();
+ refresh().then(()=>loadSettingsForm(state));
  refreshMemories();
  setInterval(refresh,5000);
 }
