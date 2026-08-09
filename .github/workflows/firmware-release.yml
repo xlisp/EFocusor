@@ -1,0 +1,55 @@
+name: Firmware Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "firmware-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install board cores and libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.8
+          arduino-cli core install esp8266:esp8266@3.1.2
+          arduino-cli lib install "AccelStepper@1.64.0"
+          arduino-cli lib install "WebSockets@2.7.2"
+          arduino-cli lib install "OneWire@2.3.8"
+          arduino-cli lib install "DallasTemperature@4.0.6"
+      - name: Compile firmware
+        run: |
+          mkdir -p build/nano build/uln build/stepdir assets
+          arduino-cli compile --fqbn arduino:avr:nano --output-dir build/nano ArduinoNanoFocuserFirmware_ULN2003
+          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir build/uln ESP8266FocuserFirmware
+          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir build/stepdir ESP8266FocuserFirmware_STEP_DIR
+          cp "$(find build/nano -name '*.hex' ! -name '*with_bootloader*' | head -1)" assets/efocuser-nano-uln2003-v1201.hex
+          cp "$(find build/uln -name '*.bin' | head -1)" assets/efocuser-esp8266-uln2003-v1103.bin
+          cp "$(find build/stepdir -name '*.bin' | head -1)" assets/efocuser-esp8266-stepdir-v1005.bin
+      - name: Create firmware manifest
+        shell: python
+        run: |
+          import hashlib, json
+          from pathlib import Path
+          items = [
+            dict(id="efocuser-nano-uln2003", displayName="EFucoser Nano ULN2003", deviceKind="Focuser", hardwareId="arduino-nano-uln2003", version="1201", protocolVersion=1, identityPattern=r"^V\s+1201#?$", target="NanoAuto", fileName="efocuser-nano-uln2003-v1201.hex", baudRate=9600, notes="Arduino Nano with ULN2003 four-phase driver"),
+            dict(id="efocuser-esp8266-uln2003", displayName="EFucoser ESP8266 ULN2003", deviceKind="Focuser", hardwareId="esp8266-d1mini-uln2003", version="1103", protocolVersion=1, identityPattern=r"^V\s+(?:1101|1103)#?$", target="Esp8266", fileName="efocuser-esp8266-uln2003-v1103.bin", baudRate=9600, notes="ESP8266 with ULN2003 four-phase driver"),
+            dict(id="efocuser-esp8266-stepdir", displayName="EFucoser ESP8266 STEP/DIR", deviceKind="Focuser", hardwareId="esp8266-d1mini-stepdir", version="1005", protocolVersion=1, identityPattern=r"^V\s+(?:1001|1005)#?$", target="Esp8266", fileName="efocuser-esp8266-stepdir-v1005.bin", baudRate=9600, notes="ESP8266 with A4988, DRV8825 or compatible STEP/DIR driver")
+          ]
+          for item in items:
+            item["sha256"] = hashlib.sha256((Path("assets") / item["fileName"]).read_bytes()).hexdigest().upper()
+          Path("assets/firmware-manifest.json").write_text(json.dumps({"schemaVersion": 1, "repository": "Indigo2233/EFocusor", "firmware": items}, indent=2), encoding="utf-8")
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: assets/*
+          generate_release_notes: true
