@@ -204,6 +204,7 @@ input{width:100%;background:#121720;color:var(--text);border:1px solid var(--lin
 <script>
 const $=id=>document.getElementById(id);
 let state={};
+let dirtyFields=new Set();
 async function api(path,body){
  const opt=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
  const res=await fetch(path,opt);
@@ -226,15 +227,15 @@ function setState(s){
  $('link').textContent=s.isMoving?'正在移动':'就绪';
  $('hold').classList.toggle('active',!!s.hold);
  $('reverse').classList.toggle('active',!!s.reversed);
- if(document.activeElement!==$('stepsPerRev'))$('stepsPerRev').value=s.stepsPerRev??8160;
- if(document.activeElement!==$('maxStepsSetting'))$('maxStepsSetting').value=s.maxSteps??816000;
- if(document.activeElement!==$('maxSpeed'))$('maxSpeed').value=s.maxSpeed??800;
- if(document.activeElement!==$('acceleration'))$('acceleration').value=s.acceleration??1000;
- if(document.activeElement!==$('manualStep'))$('manualStep').value=s.manualStep??50;
- if(document.activeElement!==$('staSsid'))$('staSsid').value=s.staSsid||'';
- if(document.activeElement!==$('staIp'))$('staIp').value=s.staIp||'';
- if(document.activeElement!==$('staGateway'))$('staGateway').value=s.staGateway||'';
- if(document.activeElement!==$('staSubnet'))$('staSubnet').value=s.staSubnet||'';
+ if(!dirtyFields.has('stepsPerRev'))$('stepsPerRev').value=s.stepsPerRev??8160;
+ if(!dirtyFields.has('maxStepsSetting'))$('maxStepsSetting').value=s.maxSteps??816000;
+ if(!dirtyFields.has('maxSpeed'))$('maxSpeed').value=s.maxSpeed??800;
+ if(!dirtyFields.has('acceleration'))$('acceleration').value=s.acceleration??1000;
+ if(!dirtyFields.has('manualStep'))$('manualStep').value=s.manualStep??50;
+ if(!dirtyFields.has('staSsid'))$('staSsid').value=s.staSsid||'';
+ if(!dirtyFields.has('staIp'))$('staIp').value=s.staIp||'';
+ if(!dirtyFields.has('staGateway'))$('staGateway').value=s.staGateway||'';
+ if(!dirtyFields.has('staSubnet'))$('staSubnet').value=s.staSubnet||'';
  const staIp=s.staIp&&s.staIp!=='0.0.0.0'?s.staIp:'未连接';
  $('network').textContent='热点: '+(s.apIp||'192.168.4.1')+' | 联网: '+staIp+' | TCP: '+(s.tcpPort||4030);
 }
@@ -295,6 +296,7 @@ function saveSettings(){
   if($('staSubnet').value.trim())body.staSubnet=$('staSubnet').value.trim();
   try{
    setState(await api('/api/settings',body));
+   dirtyFields.clear();
    $('settingsMessage').textContent='设置已保存';
   }catch(e){
    $('settingsMessage').textContent=e.code==='max_steps_below_position_or_target'
@@ -304,7 +306,10 @@ function saveSettings(){
  })();
 }
 $('saveSettings').onclick=saveSettings;
-document.querySelectorAll('.settings-panel input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSettings();}}));
+document.querySelectorAll('.settings-panel input').forEach(el=>{
+ el.addEventListener('input',()=>dirtyFields.add(el.id));
+ el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveSettings();}});
+});
 // 夜视红光模式，保存在浏览器本地存储中
 (function(){
  const night=localStorage.getItem('efucoser_night')==='1';
