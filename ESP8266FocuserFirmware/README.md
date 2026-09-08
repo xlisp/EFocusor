@@ -34,6 +34,50 @@ four phase outputs instead of STEP/DIR/ENABLE.
 | GND | - | ULN2003 GND, sensor GND, 12V negative | Common ground is required. |
 | 12V supply + | - | ULN2003 motor VCC | Motor power input. |
 
+### Power Wiring: 12V DC to Motor and ESP8266
+
+Set the buck converter output to 5.0V with a multimeter before connecting the
+ESP8266. Use a converter rated for at least 1A.
+
+```text
+12V DC positive ──┬── ULN2003 motor VCC
+                  └── Buck converter IN+
+
+12V DC negative ──┬── ULN2003 GND
+                  └── Buck converter IN-
+
+Buck converter OUT+ (5.0V) ── Wemos D1 mini 5V / NodeMCU VIN
+Buck converter OUT-          ── ESP8266 GND
+```
+
+All ground connections belong to the same electrical node:
+
+```text
+12V negative = buck IN- = buck OUT- = ESP8266 GND
+             = ULN2003 GND = DS18B20 GND
+```
+
+Connect 5V only to the Wemos D1 mini `5V` pin or NodeMCU `VIN` pin. Keep 5V
+away from `3V3`. Keep 12V away from every ESP8266 power and GPIO pin.
+
+### DS18B20 Temperature Sensor Wiring
+
+Use three-wire mode:
+
+```text
+ESP8266 3V3 ───────── DS18B20 VCC
+      │
+      └── 4.7kΩ ──┐
+                   │
+ESP8266 D4/GPIO2 ──┴─ DS18B20 DATA
+ESP8266 GND ───────── DS18B20 GND
+```
+
+The 4.7kΩ resistor connects between `D4/GPIO2` and `3V3`; it is required for
+the DATA bus and keeps GPIO2 HIGH during boot. Common waterproof-probe colors
+are red for VCC, yellow or white for DATA, and black for GND. Verify the
+supplier pinout because wire colors can vary.
+
 Connect the 35BYJ46 motor wires to the ULN2003 motor output connector or output
 terminals according to the driver board documentation. If the motor vibrates or
 moves in an incorrect sequence, swap the IN2/IN3 phase mapping in the
@@ -75,7 +119,12 @@ Set 0 after mechanically placing the focuser at the desired zero point.
 ## Temperature
 
 The DS18B20 is read every 5 seconds without blocking the stepper loop. The
-latest value is exposed as `lastTemp` in `/api/status` and `I#`.
+latest value is exposed as `lastTemp` in `/api/status` and `I#`. A working
+sensor also reports `"tempSensorPresent":true` at:
+
+```text
+http://192.168.4.1/api/status
+```
 
 Device-side temperature compensation movement is intentionally disabled. NINA
 should read the ASCOM `Temperature` property and handle temperature drift or

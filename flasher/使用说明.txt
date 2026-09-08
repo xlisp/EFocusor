@@ -1,0 +1,53 @@
+EFucoser ESP8266 ULN2003 固件刷写包
+====================================
+
+适用控制板：Wemos D1 mini、NodeMCU（ESP8266）
+适用驱动板：ULN2003、ULN2803 或兼容四相驱动板
+适用系统：32 位或 64 位 Windows
+
+普通烧录
+--------
+1. 解压整个 ZIP，不能只打开 ZIP 内的单个文件。
+2. 用可传输数据的 USB 线连接 ESP8266 控制板。
+3. 关闭 Arduino IDE、串口监视器等占用串口的程序。
+4. 双击 flash-firmware.bat。
+5. 如果显示多个 COM 口，输入 ESP8266 对应的序号。
+6. 等待窗口显示“烧录成功”。
+
+清空设置并烧录
+--------------
+如果旧固件无法启动、WiFi 异常或需要恢复出厂状态，双击
+flash-erase.bat。该操作会先擦除 Flash，再写入当前固件。
+
+烧录后检查
+----------
+1. 手机连接 Focuser-xxxxxx WiFi。
+2. WiFi 密码：012345678
+3. 打开 http://192.168.4.1
+4. 版本检查：http://192.168.4.1/api/status
+
+接线
+----
+ESP8266 D1/GPIO5  -> ULN2003 IN1
+ESP8266 D2/GPIO4  -> ULN2003 IN2
+ESP8266 D5/GPIO14 -> ULN2003 IN3
+ESP8266 D6/GPIO12 -> ULN2003 IN4
+
+ESP8266 GND、ULN2003 GND、传感器 GND 与 12V 电源负极必须共地。
+ULN2003 电机电源接 12V；ESP8266 使用 5V 供电，12V 不能接到 ESP8266
+的 3V3、5V 或 GPIO。
+
+常见问题
+--------
+1. 找不到串口：Windows 需要识别控制板的 CH340、CP2102 或其他 USB 串口
+   芯片，设备管理器中应出现 COM 口。
+2. 连接失败：按住控制板 FLASH/BOOT 键，短按 RESET，松开 FLASH/BOOT，
+   再重新烧录。
+3. 烧录后运行异常：双击 flash-erase.bat，清空原有 WiFi 和控制器设置。
+4. 电机不转：ULN2003 电机电源必须接 12V；ESP8266 GND、ULN2003 GND
+   与电源负极必须共地。
+
+固件校验
+--------
+固件位于 firmware\ 目录。firmware\manifest.json 记录固件版本和 SHA256，
+刷写脚本会校验固件，避免写入损坏文件。

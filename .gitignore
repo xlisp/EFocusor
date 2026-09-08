@@ -23,3 +23,6 @@ Makefile
 *.user
 *.suo
 __pycache__/
+
+# Flasher portable runtime
+flasher/runtime/

@@ -73,7 +73,44 @@ Primary ESP8266 firmware wiring:
 | `D0` / GPIO16 | Optional Hall sensor | Disabled by default; requires an external 10k pull-up to `3V3`. |
 | `GND` | ULN2003 GND, sensor GND, and 12V supply negative | Common ground is required. |
 | 12V supply positive | ULN2003 motor VCC | Intended for a 35BYJ46 12V motor. |
-| USB or 5V input | ESP8266 board power | Keep 12V away from ESP8266 power and GPIO pins. |
+| Buck converter 5V output | Wemos D1 mini `5V` or NodeMCU `VIN` | Set the buck output to 5.0V before connecting the ESP8266. |
+
+### 12V supply and 5V buck converter
+
+Use one 12V input pair and split it between the motor driver and buck converter:
+
+```text
+12V DC positive ──┬── ULN2003 motor VCC
+                  └── Buck converter IN+
+
+12V DC negative ──┬── ULN2003 GND
+                  └── Buck converter IN-
+
+Buck converter OUT+ (5.0V) ── Wemos D1 mini 5V / NodeMCU VIN
+Buck converter OUT-          ── ESP8266 GND
+```
+
+The ESP8266 GND, ULN2003 GND, buck converter OUT-, sensor GND, and 12V
+negative form one common ground. Use a buck converter rated for at least 1A.
+Measure 5.0V at `OUT+` and `OUT-` before connecting the ESP8266. Keep 12V away
+from the ESP8266 `5V`, `VIN`, `3V3`, and GPIO pins. Keep buck converter 5V away
+from the `3V3` pin.
+
+### DS18B20 temperature sensor
+
+```text
+ESP8266 3V3 ───────── DS18B20 VCC
+      │
+      └── 4.7kΩ ──┐
+                   │
+ESP8266 D4/GPIO2 ──┴─ DS18B20 DATA
+ESP8266 GND ───────── DS18B20 GND
+```
+
+Use the DS18B20 in three-wire mode. Common waterproof-probe colors are red for
+VCC, yellow or white for DATA, and black for GND; verify the supplier pinout
+because wire colors can vary. Supplying the sensor from `3V3` keeps its DATA
+signal within the ESP8266 GPIO voltage limit.
 
 The STEP/DIR wiring is documented in
 `ESP8266FocuserFirmware_STEP_DIR/README.md`.
@@ -130,3 +167,24 @@ and Inno Setup 6. The generated file is `dist\EFucoserASCOMSetup.exe`.
 The installer requires administrator privileges and ASCOM Platform 6 or later. It
 registers the driver for 32-bit and 64-bit ASCOM clients and removes both
 registrations during uninstall.
+
+## Firmware Flasher Package
+
+The repository includes a Windows flasher source under `flasher/`. The packaged
+ZIP contains the compiled ESP8266 ULN2003 firmware, a portable Python runtime,
+esptool, pyserial, and two batch scripts, so users can flash the firmware
+without installing Arduino, Python, or esptool.
+
+User instructions are in [flasher/README.md](flasher/README.md) and in the
+generated `README.txt` inside the ZIP. The normal entry point is
+`flash-firmware.bat`; use `flash-erase.bat` to erase settings before flashing.
+
+Build a fresh ZIP with:
+
+```powershell
+.\flasher\Build-Flasher.ps1
+```
+
+The build compiles `ESP8266FocuserFirmware` with `arduino-cli`, writes
+`firmware\manifest.json` with the firmware SHA256, and creates
+`dist\EFucoser_ESP8266_ULN2003_Flasher_Win32_v1103.zip`.
