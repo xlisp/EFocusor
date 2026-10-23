@@ -21,6 +21,7 @@
 #include "indicom.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -33,7 +34,7 @@ static std::unique_ptr<IKunFocuser> ikunFocuser(new IKunFocuser());
 
 IKunFocuser::IKunFocuser()
 {
-    setVersion(1, 0);
+    setVersion(1, 1);
     setSupportedConnections(CONNECTION_SERIAL | CONNECTION_TCP);
     FI::SetCapability(FOCUSER_CAN_ABS_MOVE | FOCUSER_CAN_REL_MOVE | FOCUSER_CAN_ABORT |
                       FOCUSER_CAN_SYNC | FOCUSER_CAN_REVERSE);
@@ -48,8 +49,11 @@ bool IKunFocuser::initProperties()
 {
     INDI::Focuser::initProperties();
 
-    // Speed is fixed at 300 steps/s for reliable torque with 28BYJ-48.
-    m_FixedSpeed = 300;
+    // Connection reads the controller's saved settings without overwriting them.
+    MaximumSpeedNP[0].fill("STEPS_PER_SECOND", "Steps/s", "%.f", 1, 2000, 1, 300);
+    MaximumSpeedNP.fill(getDeviceName(), "FOCUS_MAX_SPEED", "Maximum Speed", MAIN_CONTROL_TAB, IP_RW, 60, IPS_IDLE);
+    SettingsPolicyTP[0].fill("ON_CONNECT", "Motor Settings", "PRESERVE");
+    SettingsPolicyTP.fill(getDeviceName(), "FOCUS_SETTINGS_POLICY", "Connection Policy", OPTIONS_TAB, IP_RO, 0, IPS_OK);
 
     FocusMaxPosNP[0].setMin(100);
     FocusMaxPosNP[0].setMax(9999999);
@@ -79,12 +83,20 @@ bool IKunFocuser::initProperties()
     return true;
 }
 
+void IKunFocuser::ISGetProperties(const char *dev)
+{
+    INDI::Focuser::ISGetProperties(dev);
+    if (dev == nullptr || std::strcmp(dev, getDeviceName()) == 0)
+        defineProperty(SettingsPolicyTP);
+}
+
 bool IKunFocuser::updateProperties()
 {
     INDI::Focuser::updateProperties();
 
     if (isConnected())
     {
+        defineProperty(MaximumSpeedNP);
         defineProperty(AccelerationNP);
         defineProperty(HoldSP);
         defineProperty(TemperatureNP);
@@ -92,8 +104,7 @@ bool IKunFocuser::updateProperties()
 
         if (readFullState())
         {
-            // Apply fixed speed on every connect.
-            SetFocuserSpeed(m_FixedSpeed);
+            MaximumSpeedNP.apply();
             FocusMaxPosNP.apply();
             FocusAbsPosNP.apply();
             FocusReverseSP.apply();
@@ -105,11 +116,13 @@ bool IKunFocuser::updateProperties()
         }
         else
         {
-            LOG_WARN("Connected to IKunFocuser, but one or more startup values could not be read.");
+            communicationLost("IKunFocuser startup state could not be verified.");
+            return false;
         }
     }
     else
     {
+        deleteProperty(MaximumSpeedNP);
         deleteProperty(AccelerationNP);
         deleteProperty(HoldSP);
         deleteProperty(TemperatureNP);
@@ -121,6 +134,8 @@ bool IKunFocuser::updateProperties()
 
 bool IKunFocuser::Handshake()
 {
+    m_CommunicationFailures = 0;
+    m_TemperaturePollCounter = 0;
     if (getActiveConnection()->type() == Connection::Interface::CONNECTION_SERIAL)
     {
         // ESP8266 USB bridges reset the controller when the serial port opens.
@@ -257,6 +272,20 @@ bool IKunFocuser::readFullState()
         return false;
 
     const std::string json(response);
+    int64_t maximumSpeed = 0, position = 0, maximumPosition = 0;
+    bool moving = false;
+    if (!IKunFocuserProtocol::parseJsonInteger(json, "maxSpeed", maximumSpeed) ||
+            maximumSpeed < 1 || maximumSpeed > 2000 ||
+            !IKunFocuserProtocol::parseJsonInteger(json, "maxSteps", maximumPosition) ||
+            maximumPosition < 100 || maximumPosition > 9999999 ||
+            !IKunFocuserProtocol::parseJsonInteger(json, "positionSteps", position) ||
+            position < 0 || position > maximumPosition ||
+            !IKunFocuserProtocol::parseJsonBoolean(json, "isMoving", moving))
+        return false;
+    MaximumSpeedNP[0].setValue(maximumSpeed);
+    MaximumSpeedNP.setState(IPS_OK);
+    FocusAbsPosNP.setState(moving ? IPS_BUSY : IPS_OK);
+    FocusRelPosNP.setState(moving ? IPS_BUSY : IPS_OK);
     bool foundAny = false;
     int64_t integerValue = 0;
     double numberValue = 0;
@@ -411,10 +440,22 @@ bool IKunFocuser::SetFocuserMaxPosition(uint32_t ticks)
 
 bool IKunFocuser::SetFocuserSpeed(int speed)
 {
+    if (speed < 1 || speed > 2000)
+        return false;
+    IKunFocuserProtocol::MotionStatus status;
+    if (!readMotionStatus(status) || status.moving)
+        return false;
     char command[64] = { 0 };
     char response[RESPONSE_SIZE] = { 0 };
     std::snprintf(command, sizeof(command), "X %d#", speed);
-    return sendCommand(command, response, sizeof(response));
+    if (!sendCommand(command, response, sizeof(response)))
+        return false;
+    std::string acknowledgement(response);
+    if (!acknowledgement.empty() && acknowledgement.back() == '#')
+        acknowledgement.pop_back();
+    if (acknowledgement != "X " + std::to_string(speed) || !readFullState())
+        return false;
+    return MaximumSpeedNP[0].getValue() == speed;
 }
 
 bool IKunFocuser::setAcceleration(uint32_t acceleration)
@@ -433,6 +474,16 @@ bool IKunFocuser::setHold(bool enabled)
 
 bool IKunFocuser::ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n)
 {
+    if (dev != nullptr && std::strcmp(dev, getDeviceName()) == 0 && MaximumSpeedNP.isNameMatch(name))
+    {
+        bool valid = isConnected() && n == 1 && names != nullptr && values != nullptr &&
+                     names[0] != nullptr && std::strcmp(names[0], "STEPS_PER_SECOND") == 0 &&
+                     std::isfinite(values[0]) && std::floor(values[0]) == values[0] &&
+                     values[0] >= 1 && values[0] <= 2000;
+        MaximumSpeedNP.setState(valid && SetFocuserSpeed(static_cast<int>(values[0])) ? IPS_OK : IPS_ALERT);
+        MaximumSpeedNP.apply();
+        return true;
+    }
     if (dev != nullptr && std::strcmp(dev, getDeviceName()) == 0 && AccelerationNP.isNameMatch(name))
     {
         const double previous = AccelerationNP[0].getValue();
@@ -502,15 +553,15 @@ void IKunFocuser::TimerHit()
     }
     else if (++m_CommunicationFailures >= MAX_COMMUNICATION_FAILURES)
     {
-        markMotionAlert();
-        m_CommunicationFailures = 0;
-        LOG_ERROR("Lost communication with IKunFocuser while polling status.");
+        communicationLost("Lost communication with IKunFocuser while polling status.");
+        return;
     }
 
     if (++m_TemperaturePollCounter >= 10)
     {
         m_TemperaturePollCounter = 0;
         const double previousMaximum = FocusMaxPosNP[0].getValue();
+        const double previousSpeed = MaximumSpeedNP[0].getValue();
         const double previousAcceleration = AccelerationNP[0].getValue();
         const double previousTemperature = TemperatureNP[0].getValue();
         const IPState previousTemperatureState = TemperatureNP.getState();
@@ -519,6 +570,8 @@ void IKunFocuser::TimerHit()
 
         if (readFullState())
         {
+            if (MaximumSpeedNP[0].getValue() != previousSpeed)
+                MaximumSpeedNP.apply();
             if (FocusMaxPosNP[0].getValue() != previousMaximum)
                 FocusMaxPosNP.apply();
             if (AccelerationNP[0].getValue() != previousAcceleration)
@@ -534,4 +587,18 @@ void IKunFocuser::TimerHit()
     }
 
     SetTimer(getCurrentPollingPeriod());
+}
+
+void IKunFocuser::communicationLost(const char *message)
+{
+    markMotionAlert();
+    LOG_ERROR(message);
+    if (!Disconnect())
+    {
+        // An unclosed transport must not be opened a second time.
+        setConnected(true, IPS_ALERT, "Communication failed; transport could not be closed.");
+        return;
+    }
+    setConnected(false, IPS_ALERT, message);
+    updateProperties();
 }

@@ -30,6 +30,7 @@ class IKunFocuser : public INDI::Focuser
 
         const char *getDefaultName() override;
         bool initProperties() override;
+        void ISGetProperties(const char *dev) override;
         bool updateProperties() override;
         bool ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n) override;
         bool ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n) override;
@@ -66,14 +67,16 @@ class IKunFocuser : public INDI::Focuser
         void applyMaximumPosition(uint32_t maximum);
         void applyMotionStatus(const IKunFocuserProtocol::MotionStatus &status);
         void markMotionAlert();
+        void communicationLost(const char *message);
 
+        INDI::PropertyNumber MaximumSpeedNP { 1 };
+        INDI::PropertyText SettingsPolicyTP { 1 };
         INDI::PropertyNumber AccelerationNP { 1 };
         INDI::PropertySwitch HoldSP { 2 };
         INDI::PropertyNumber TemperatureNP { 1 };
         INDI::PropertyText FirmwareTP { 2 };
 
         uint32_t m_LastPosition { 0 };
-        uint32_t m_FixedSpeed { 300 };
         uint8_t m_CommunicationFailures { 0 };
         uint8_t m_TemperaturePollCounter { 0 };
         int m_FirmwareVersion { 0 };

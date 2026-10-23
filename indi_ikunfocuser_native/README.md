@@ -27,6 +27,18 @@ default to `192.168.4.1`.
 - Firmware and controller identification
 - Serial and TCP connection plugins supplied by INDI
 
+Connecting reads and preserves the controller's saved motor settings; it no
+longer writes a fixed 300 steps/s. `FOCUS_MAX_SPEED.STEPS_PER_SECOND` accepts an
+explicit integer from 1 to 2000 only while stationary, with acknowledgement and
+status readback. `FOCUS_SETTINGS_POLICY.ON_CONNECT=PRESERVE` advertises this
+behavior before connection. Opening and polling never move or home the motor.
+
+Three consecutive motion-status failures close the failed transport and publish
+a disconnected Alert state. A client may then reconnect through the configured
+serial or TCP endpoint; a serial symlink is resolved again when opened. A failed
+close retains an Alert state and does not open a second transport. Communication
+loss does not prove that the physical motor has stopped.
+
 ## Standalone Linux build
 
 Install libindi development files, CMake, and a C++ compiler, then run:
