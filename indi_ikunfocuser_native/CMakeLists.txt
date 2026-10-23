@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(indi_ikun_focuser VERSION 1.2 LANGUAGES CXX)
+project(indi_ikun_focuser VERSION 1.3 LANGUAGES CXX)
 
 find_package(INDI REQUIRED)
 

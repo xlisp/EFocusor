@@ -7,6 +7,7 @@
 #include <DallasTemperature.h>
 #include <ctype.h>
 #include <math.h>
+#include "CooperativeReply.h"
 
 // Pin definitions - GPIO numbers for NodeMCU/Wemos D1 mini
 // D0=16, D1=5, D2=4, D3=0, D4=2, D5=14, D6=12, D7=13
@@ -20,8 +21,8 @@
 #define USE_HALL_SENSOR 0
 #define HALL_PIN 16   // D0, optional Hall input. Requires external 10k pull-up to 3.3V.
 
-#define DEVICE_RESPONSE "EFucoser ESP8266 ULN2003 Focuser ver 1104"
-#define FIRMWARE_VERSION 1104
+#define DEVICE_RESPONSE "EFucoser ESP8266 ULN2003 Focuser ver 1105"
+#define FIRMWARE_VERSION 1105
 #define EEPROM_SIZE 512
 #define SETTINGS_MAGIC 0xEF0C2003UL
 #define MEMORY_MAGIC 0x4D454D35UL
@@ -75,6 +76,8 @@ DallasTemperature tempSensors(&tempOneWire);
 
 String tcpBuffers[MAX_TCP_CLIENTS];
 String serialBuffer;
+CooperativeReply<1024> serialReply;
+bool serialCommandOverflow = false;
 String apSsid;
 
 bool positionSaved = true;
@@ -91,6 +94,8 @@ unsigned long lastTempSampleMillis = 0;
 unsigned long tempRequestMillis = 0;
 bool tempSensorPresent = false;
 bool tempConversionPending = false;
+bool settingsSavePending = false;
+bool statusBroadcastPending = false;
 const unsigned long debounceDelayMs = 20;
 const unsigned long tempReadIntervalMs = 5000;
 const unsigned long tempRetryIntervalMs = 10000;
@@ -346,11 +351,21 @@ if(location.protocol==='file:'){
 
 // ==================== Settings Management ====================
 
-void saveSettings() {
+bool motionActive() {
+  return stepper.distanceToGo() != 0 || findingHome;
+}
+
+void serviceSettingsSave() {
+  if (!settingsSavePending || motionActive()) return;
   settings.magic = SETTINGS_MAGIC;
   settings.position = driverToPhysicalSteps(stepper.currentPosition());
   EEPROM.put(0, settings);
-  EEPROM.commit();
+  if (EEPROM.commit()) settingsSavePending = false;
+}
+
+void saveSettings() {
+  settingsSavePending = true;
+  serviceSettingsSave();
 }
 
 void initializeMemorySlots() {
@@ -618,6 +633,8 @@ String statusJson() {
   json += String(settings.lastTemp, 2);
   json += ",\"tempSensorPresent\":";
   json += boolText(tempSensorPresent);
+  json += ",\"settingsPending\":";
+  json += boolText(settingsSavePending);
   json += ",\"apSsid\":\"";
   json += apSsid;
   json += "\",\"apIp\":\"";
@@ -639,6 +656,15 @@ String statusJson() {
 }
 
 void broadcastStatus() {
+  statusBroadcastPending = true;
+}
+
+void serviceStatusBroadcast() {
+  if (motionActive()) return;
+  if (!statusBroadcastPending && millis() - lastStatusBroadcast <= 500) return;
+  statusBroadcastPending = false;
+  lastStatusBroadcast = millis();
+  if (webSocket.connectedClients() == 0) return;
   String json = statusJson();
   webSocket.broadcastTXT(json);
 }
@@ -1149,15 +1175,29 @@ void handleTcpClients() {
 }
 
 void handleSerial() {
-  while (Serial.available() > 0) {
+  // ESP8266 reports 128 bytes of TX space but uart_write waits at 127.
+  // Reserve one byte and emit at most eight per loop, allowing run() between
+  // chunks even when a complete I# reply takes half a second on the wire.
+  serialReply.drain(Serial, 1);
+  if (serialReply.busy()) return;
+  size_t budget = 32;
+  while (budget-- && Serial.available() > 0) {
     char c = (char)Serial.read();
     if (c == '#') {
-      Serial.print(processCommand(serialBuffer));
+      String reply = serialCommandOverflow ? String("ERR:command_too_long#") : processCommand(serialBuffer);
+      if (!serialReply.assign(reply.c_str(), reply.length())) {
+        const char error[] = "ERR:reply_too_long#";
+        serialReply.assign(error, sizeof(error) - 1);
+      }
       serialBuffer = "";
+      serialCommandOverflow = false;
+      break;
     } else if (c != '\r' && c != '\n') {
-      serialBuffer += c;
+      if (serialBuffer.length() < 128 && !serialCommandOverflow) serialBuffer += c;
+      else serialCommandOverflow = true;
     }
   }
+  serialReply.drain(Serial, 1);
 }
 
 void updateManualButton(int pin, int &lastState, bool &manualFlag, unsigned long &lastDebounce, int direction) {
@@ -1231,6 +1271,9 @@ void setupTemperatureSensor() {
 }
 
 void serviceTemperatureSensor() {
+  // Asynchronous conversion still performs synchronous OneWire bus traffic.
+  // Defer both discovery and reads until the motor is stationary.
+  if (motionActive()) return;
   unsigned long now = millis();
 
   if (!tempSensorPresent) {
@@ -1296,8 +1339,7 @@ void setup() {
   webSocket.begin();
   webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     if (type == WStype_CONNECTED) {
-      String json = statusJson();
-      webSocket.sendTXT(num, json);
+      broadcastStatus();
     }
   });
 
@@ -1309,10 +1351,14 @@ void setup() {
 }
 
 void loop() {
-  server.handleClient();
-  webSocket.loop();
-  handleTcpClients();
   handleSerial();
+  stepper.run();
+  server.handleClient();
+  stepper.run();
+  webSocket.loop();
+  stepper.run();
+  handleTcpClients();
+  stepper.run();
   handleManualButtons();
   serviceHome();
   serviceTemperatureSensor();
@@ -1325,8 +1371,6 @@ void loop() {
     broadcastStatus();
   }
 
-  if (millis() - lastStatusBroadcast > 500) {
-    lastStatusBroadcast = millis();
-    broadcastStatus();
-  }
+  serviceSettingsSave();
+  serviceStatusBroadcast();
 }

@@ -52,6 +52,13 @@ Core behavior:
   protocol homing returns `ERR:home_unavailable#`.
 - `Set 0` stores `homeOffsetSteps` to define a logical zero.
 - The mobile web page is embedded in `INDEX_HTML` and served from `/`.
+- ULN2003 firmware 1105 sends bounded, ordered serial reply chunks instead of
+  blocking the motor loop; `CooperativeReply.h` is part of the sketch. Flash
+  commits, OneWire operations, and unsolicited WebSocket broadcasts defer until
+  stationary. `settingsPending` identifies settings not yet persisted.
+- Native INDI driver 1.3 keeps motion/stop polling on short `G#` frames and
+  postpones the long `I#` refresh until a successful stationary status. Do not
+  reintroduce full-state polling during movement on firmware 1103/1104.
 - Status JSON at `GET /api/status`. Movement via `POST /api/move`.
 - Settings via `GET/POST /api/settings`.
 

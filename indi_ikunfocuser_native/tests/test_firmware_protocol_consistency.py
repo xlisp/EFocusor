@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIRMWARE = {
     "ESP8266 ULN2003": (
         ROOT / "ESP8266FocuserFirmware" / "ESP8266FocuserFirmware.ino",
-        1104,
+        1105,
     ),
     "ESP8266 STEP/DIR": (
         ROOT

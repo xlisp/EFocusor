@@ -118,7 +118,9 @@ Set 0 after mechanically placing the focuser at the desired zero point.
 
 ## Temperature
 
-The DS18B20 is read every 5 seconds without blocking the stepper loop. The
+The DS18B20 conversion is asynchronous. Version 1105 defers discovery, bus
+reads, and conversion requests while moving; temperature resumes updating when
+stationary. The last available value is retained during a move. The
 latest value is exposed as `lastTemp` in `/api/status` and `I#`. A working
 sensor also reports `"tempSensorPresent":true` at:
 
@@ -181,11 +183,11 @@ The following public identities and protocol surfaces are retained:
 - AP password: `012345678`
 - ASCOM driver can use the same TCP or serial protocol
 
-The firmware version is `1104`, and the identification string
+The firmware version is `1105`, and the identification string
 is:
 
 ```text
-EFucoser ESP8266 ULN2003 Focuser ver 1104
+EFucoser ESP8266 ULN2003 Focuser ver 1105
 ```
 
 Version 1103 adds the `X <speed>#` and `A <acceleration>#` commands required by
@@ -197,3 +199,23 @@ logical zero or changing saved motor speed. Earlier firmware used a deceleration
 move; at 1200 steps/s and 300 steps/s² this can continue for about four seconds.
 This change does not establish that 1200 steps/s is mechanically reliable under
 load; missed steps and the usable maximum speed require a physical test.
+
+Version 1105 drains serial replies in chunks of at most eight bytes, bounded by
+the UART's currently available space. A long `I#` reply therefore allows the
+stepper loop to run between chunks at the existing 9600 baud rate. Replies stay
+ordered and commands are not executed from truncated input. EEPROM commits,
+OneWire operations, and unsolicited WebSocket broadcasts wait until stationary;
+`settingsPending` reports an accepted setting awaiting persistence. EEPROM layout
+and saved motor parameters are unchanged. Other synchronous HTTP/TCP handlers
+remain cooperative code, so this is not a hard real-time guarantee.
+
+Firmware scheduling tests use the real reply helper, extracted sketch functions,
+and optionally the actual AccelStepper source:
+
+```sh
+EFUCOSER_ACCELSTEPPER_SOURCE=/path/to/AccelStepper/src \
+  python -m unittest discover -s indi_ikunfocuser_native/tests -p 'test_firmware*.py' -v
+```
+
+Without that environment variable the real-library timing test is skipped;
+offline results do not establish the motor's usable speed under load.

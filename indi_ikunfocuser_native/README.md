@@ -45,6 +45,13 @@ reported stationary only after a controller status confirms it. A bad response
 or lost communication reports Alert and a later stop request may be retried.
 Stopping does not send another move, sync, home, or speed command.
 
+Version 1.3 polls only the short `G#` motion status during movement. The long
+`I#` metadata/temperature refresh is postponed until a successful `G#` confirms
+stationary, including when the refresh becomes due during a long move. This
+avoids periodic serial blocking on firmware 1103/1104. Temperature and settings
+remain cached during movement and refresh after it ends; failed motion queries
+never authorize the long transaction. Saved speed and acceleration are preserved.
+
 ## Standalone Linux build
 
 Install libindi development files, CMake, and a C++ compiler, then run:

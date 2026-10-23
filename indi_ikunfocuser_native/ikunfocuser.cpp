@@ -34,7 +34,7 @@ static std::unique_ptr<IKunFocuser> ikunFocuser(new IKunFocuser());
 
 IKunFocuser::IKunFocuser()
 {
-    setVersion(1, 2);
+    setVersion(1, 3);
     setSupportedConnections(CONNECTION_SERIAL | CONNECTION_TCP);
     FI::SetCapability(FOCUSER_CAN_ABS_MOVE | FOCUSER_CAN_REL_MOVE | FOCUSER_CAN_ABORT |
                       FOCUSER_CAN_SYNC | FOCUSER_CAN_REVERSE);
@@ -573,7 +573,8 @@ void IKunFocuser::TimerHit()
         return;
 
     IKunFocuserProtocol::MotionStatus status;
-    if (readMotionStatus(status, true))
+    const bool motionRead = readMotionStatus(status, true);
+    if (motionRead)
     {
         m_CommunicationFailures = 0;
         applyMotionStatus(status);
@@ -590,7 +591,12 @@ void IKunFocuser::TimerHit()
         return;
     }
 
-    if (++m_TemperaturePollCounter >= 10)
+    // I# is a long, synchronously transmitted JSON reply on older firmware.
+    // Keep motion/stop polling on short G# frames and refresh metadata as soon
+    // as motion ends. A failed G# must not authorize the longer transaction.
+    if (m_TemperaturePollCounter < 10)
+        ++m_TemperaturePollCounter;
+    if (motionRead && !status.moving && m_TemperaturePollCounter >= 10)
     {
         m_TemperaturePollCounter = 0;
         const double previousMaximum = FocusMaxPosNP[0].getValue();
