@@ -219,3 +219,10 @@ EFUCOSER_ACCELSTEPPER_SOURCE=/path/to/AccelStepper/src \
 
 Without that environment variable the real-library timing test is skipped;
 offline results do not establish the motor's usable speed under load.
+
+2026-10-23 deployment: firmware 1105 and native INDI driver 1.3 were installed
+on the ASIAIR Pro development setup after a full 4 MiB controller Flash backup.
+The write checksum was verified and the EEPROM sector stayed byte-for-byte
+identical. Serial and native EAF reads confirmed logical position 0, speed 1200,
+acceleration 300, and no motion. No movement, sync, home, or calibration command
+was sent. Loaded motion and physical stop behavior remain to be tested.
