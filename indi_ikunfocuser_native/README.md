@@ -39,6 +39,12 @@ serial or TCP endpoint; a serial symlink is resolved again when opened. A failed
 close retains an Alert state and does not open a second transport. Communication
 loss does not prove that the physical motor has stopped.
 
+Version 1.2 validates the exact `S#` acknowledgement and then reads `G#`.
+The abort property remains Busy while older firmware decelerates; position is
+reported stationary only after a controller status confirms it. A bad response
+or lost communication reports Alert and a later stop request may be retried.
+Stopping does not send another move, sync, home, or speed command.
+
 ## Standalone Linux build
 
 Install libindi development files, CMake, and a C++ compiler, then run:

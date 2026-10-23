@@ -79,6 +79,7 @@ class IKunFocuser : public INDI::Focuser
         uint32_t m_LastPosition { 0 };
         uint8_t m_CommunicationFailures { 0 };
         uint8_t m_TemperaturePollCounter { 0 };
+        bool m_StopPending { false };
         int m_FirmwareVersion { 0 };
 
         static constexpr std::size_t RESPONSE_SIZE = 1024;

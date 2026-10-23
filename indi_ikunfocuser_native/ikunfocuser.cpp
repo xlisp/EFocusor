@@ -34,7 +34,7 @@ static std::unique_ptr<IKunFocuser> ikunFocuser(new IKunFocuser());
 
 IKunFocuser::IKunFocuser()
 {
-    setVersion(1, 1);
+    setVersion(1, 2);
     setSupportedConnections(CONNECTION_SERIAL | CONNECTION_TCP);
     FI::SetCapability(FOCUSER_CAN_ABS_MOVE | FOCUSER_CAN_REL_MOVE | FOCUSER_CAN_ABORT |
                       FOCUSER_CAN_SYNC | FOCUSER_CAN_REVERSE);
@@ -134,6 +134,7 @@ bool IKunFocuser::updateProperties()
 
 bool IKunFocuser::Handshake()
 {
+    m_StopPending = false;
     m_CommunicationFailures = 0;
     m_TemperaturePollCounter = 0;
     if (getActiveConnection()->type() == Connection::Interface::CONNECTION_SERIAL)
@@ -356,15 +357,17 @@ void IKunFocuser::applyMotionStatus(const IKunFocuserProtocol::MotionStatus &sta
 
     if (status.moving)
     {
-        if (FocusAbsPosNP.getState() != IPS_BUSY && FocusRelPosNP.getState() != IPS_BUSY)
+        if (FocusAbsPosNP.getState() != IPS_BUSY || FocusRelPosNP.getState() != IPS_BUSY)
         {
             FocusAbsPosNP.setState(IPS_BUSY);
+            FocusRelPosNP.setState(IPS_BUSY);
             FocusAbsPosNP.apply();
+            FocusRelPosNP.apply();
         }
     }
     else
     {
-        if (FocusAbsPosNP.getState() == IPS_BUSY || FocusRelPosNP.getState() == IPS_BUSY)
+        if (FocusAbsPosNP.getState() != IPS_OK || FocusRelPosNP.getState() != IPS_OK)
         {
             FocusAbsPosNP.setState(IPS_OK);
             FocusRelPosNP.setState(IPS_OK);
@@ -409,7 +412,7 @@ IPState IKunFocuser::MoveRelFocuser(FocusDirection direction, uint32_t ticks)
 bool IKunFocuser::AbortFocuser()
 {
     char response[RESPONSE_SIZE] = { 0 };
-    return sendCommand("S#", response, sizeof(response));
+    return sendCommand("S#", response, sizeof(response)) && std::strcmp(response, "S#") == 0;
 }
 
 bool IKunFocuser::SyncFocuser(uint32_t ticks)
@@ -507,6 +510,30 @@ bool IKunFocuser::ISNewNumber(const char *dev, const char *name, double values[]
 
 bool IKunFocuser::ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n)
 {
+    if (dev != nullptr && std::strcmp(dev, getDeviceName()) == 0 && FocusAbortSP.isNameMatch(name))
+    {
+        // INDI's default abort handler marks position Idle on command ACK.
+        // Older firmware is still decelerating at that point. Publish Busy
+        // until G# confirms stationary; an ACK alone never means stopped.
+        FocusAbortSP.reset();
+        m_StopPending = false;
+        bool valid = isConnected() && n == 1 && states && names && names[0] &&
+                     std::strcmp(names[0], "ABORT") == 0 && states[0] == ISS_ON;
+        IKunFocuserProtocol::MotionStatus status;
+        if (valid && AbortFocuser() && readMotionStatus(status))
+        {
+            applyMotionStatus(status);
+            m_StopPending = status.moving;
+            FocusAbortSP.setState(status.moving ? IPS_BUSY : IPS_OK);
+        }
+        else
+        {
+            markMotionAlert();
+            FocusAbortSP.setState(IPS_ALERT);
+        }
+        FocusAbortSP.apply();
+        return true;
+    }
     if (dev != nullptr && std::strcmp(dev, getDeviceName()) == 0 && HoldSP.isNameMatch(name))
     {
         const int previous = HoldSP.findOnSwitchIndex();
@@ -550,6 +577,12 @@ void IKunFocuser::TimerHit()
     {
         m_CommunicationFailures = 0;
         applyMotionStatus(status);
+        if (m_StopPending && !status.moving)
+        {
+            m_StopPending = false;
+            FocusAbortSP.setState(IPS_OK);
+            FocusAbortSP.apply();
+        }
     }
     else if (++m_CommunicationFailures >= MAX_COMMUNICATION_FAILURES)
     {
@@ -591,6 +624,12 @@ void IKunFocuser::TimerHit()
 
 void IKunFocuser::communicationLost(const char *message)
 {
+    if (m_StopPending)
+    {
+        m_StopPending = false;
+        FocusAbortSP.setState(IPS_ALERT);
+        FocusAbortSP.apply();
+    }
     markMotionAlert();
     LOG_ERROR(message);
     if (!Disconnect())

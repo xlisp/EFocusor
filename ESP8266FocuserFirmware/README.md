@@ -181,12 +181,19 @@ The following public identities and protocol surfaces are retained:
 - AP password: `012345678`
 - ASCOM driver can use the same TCP or serial protocol
 
-The firmware version is `1103`, and the identification string
+The firmware version is `1104`, and the identification string
 is:
 
 ```text
-EFucoser ESP8266 ULN2003 Focuser ver 1103
+EFucoser ESP8266 ULN2003 Focuser ver 1104
 ```
 
 Version 1103 adds the `X <speed>#` and `A <acceleration>#` commands required by
 the native INDI driver.
+
+Version 1104 makes serial/TCP `S#` and HTTP Halt stop at the current physical
+step immediately, clearing the target and velocity without resetting the
+logical zero or changing saved motor speed. Earlier firmware used a deceleration
+move; at 1200 steps/s and 300 steps/s² this can continue for about four seconds.
+This change does not establish that 1200 steps/s is mechanically reliable under
+load; missed steps and the usable maximum speed require a physical test.

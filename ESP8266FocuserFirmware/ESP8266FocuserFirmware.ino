@@ -20,8 +20,8 @@
 #define USE_HALL_SENSOR 0
 #define HALL_PIN 16   // D0, optional Hall input. Requires external 10k pull-up to 3.3V.
 
-#define DEVICE_RESPONSE "EFucoser ESP8266 ULN2003 Focuser ver 1103"
-#define FIRMWARE_VERSION 1103
+#define DEVICE_RESPONSE "EFucoser ESP8266 ULN2003 Focuser ver 1104"
+#define FIRMWARE_VERSION 1104
 #define EEPROM_SIZE 512
 #define SETTINGS_MAGIC 0xEF0C2003UL
 #define MEMORY_MAGIC 0x4D454D35UL
@@ -645,6 +645,14 @@ void broadcastStatus() {
 
 // ==================== Command Processing ====================
 
+void haltMotionImmediately() {
+  findingHome = false;
+  // Clear both the pending target and velocity at the current physical step.
+  // AccelStepper::stop() instead schedules a deceleration move (about four
+  // seconds at 1200 steps/s and 300 steps/s^2), which is unsuitable for Halt.
+  stepper.setCurrentPosition(stepper.currentPosition());
+}
+
 long commandParameter(String command) {
   if (command.length() <= 1) {
     return 0;
@@ -693,8 +701,7 @@ String processCommand(String command) {
       return "ERR:home_unavailable#";
 #endif
     case 'S':
-      stepper.stop();
-      findingHome = false;
+      haltMotionImmediately();
       broadcastStatus();
       return "S#";
     case 'R':
@@ -882,8 +889,7 @@ void handleMoveApi() {
 }
 
 void handleHaltApi() {
-  stepper.stop();
-  findingHome = false;
+  haltMotionImmediately();
   broadcastStatus();
   sendJson(200, statusJson());
 }
