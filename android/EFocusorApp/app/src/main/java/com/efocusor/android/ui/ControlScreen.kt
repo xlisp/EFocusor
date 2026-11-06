@@ -21,7 +21,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -54,16 +56,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.efocusor.android.MainViewModel
+import com.efocusor.android.NamedPosition
 import com.efocusor.android.Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ControlScreen(vm: MainViewModel) {
     val ui by vm.ui.collectAsState()
+    val namedPositions by vm.namedPositions.collectAsState()
     val info = ui.info
 
     var showMoveDialog by remember { mutableStateOf(false) }
     var showSetDialog by remember { mutableStateOf(false) }
+    var showAddPosition by remember { mutableStateOf(false) }
+    var editingPosition by remember { mutableStateOf<NamedPosition?>(null) }
 
     Scaffold(
         topBar = {
@@ -252,7 +258,80 @@ fun ControlScreen(vm: MainViewModel) {
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(16.dp))
+
+            // -------- named positions --------
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "位置记忆",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                TextButton(onClick = { showAddPosition = true }) {
+                    Text("＋ 记住当前位置", fontSize = 12.sp)
+                }
+            }
+            if (namedPositions.isEmpty()) {
+                Text(
+                    "还没有保存的位置。对好焦后点“记住当前位置”,\n起个名字(如 533MC 相机 / 25mm 目镜),以后一键直达。",
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            namedPositions.forEach { np ->
+                val delta = np.position - info.position
+                androidx.compose.material3.Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    onClick = { vm.moveTo(np.position) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                np.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "%,d".format(np.position) +
+                                    "   Δ %s%,d".format(if (delta >= 0) "+" else "−", kotlin.math.abs(delta)),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { vm.updateNamedPositionToCurrent(np.id) }) {
+                            Icon(
+                                Icons.Filled.MyLocation, contentDescription = "更新为当前位置",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { editingPosition = np }) {
+                            Icon(
+                                Icons.Filled.Edit, contentDescription = "编辑",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
         }
     }
 
@@ -276,6 +355,85 @@ fun ControlScreen(vm: MainViewModel) {
             onDismiss = { showSetDialog = false },
         )
     }
+    if (showAddPosition) {
+        NamedPositionDialog(
+            existing = null,
+            initialPosition = info.position,
+            onSave = { name, pos ->
+                vm.upsertNamedPosition(null, name, pos)
+                showAddPosition = false
+            },
+            onDelete = null,
+            onDismiss = { showAddPosition = false },
+        )
+    }
+    editingPosition?.let { np ->
+        NamedPositionDialog(
+            existing = np,
+            initialPosition = np.position,
+            onSave = { name, pos ->
+                vm.upsertNamedPosition(np.id, name, pos)
+                editingPosition = null
+            },
+            onDelete = {
+                vm.deleteNamedPosition(np.id)
+                editingPosition = null
+            },
+            onDismiss = { editingPosition = null },
+        )
+    }
+}
+
+@Composable
+private fun NamedPositionDialog(
+    existing: NamedPosition?,
+    initialPosition: Long,
+    onSave: (String, Long) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var posText by remember { mutableStateOf(initialPosition.toString()) }
+    val pos = posText.toLongOrNull()
+    val valid = name.isNotBlank() && pos != null && pos in 0..99_999_999L
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "记住当前位置" else "编辑位置") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("名字(如 533MC 相机 / 25mm 目镜)") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = posText,
+                    onValueChange = { posText = it.filter { c -> c.isDigit() } },
+                    label = { Text("位置(步)") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Number
+                    ),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = { onSave(name, pos!!) }) { Text("保存") }
+        },
+        dismissButton = {
+            androidx.compose.foundation.layout.Row {
+                if (onDelete != null) {
+                    TextButton(onClick = onDelete) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
+    )
 }
 
 @Composable

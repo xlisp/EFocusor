@@ -33,6 +33,13 @@ import java.util.concurrent.atomic.AtomicInteger
 
 enum class Screen { Connect, Control, Settings }
 
+/** User-named focus position, e.g. "ASI533MC 相机" / "25mm 目镜". Stored on the phone. */
+data class NamedPosition(
+    val id: Long,
+    val name: String,
+    val position: Long,
+)
+
 data class UiState(
     val screen: Screen = Screen.Connect,
     val connecting: Boolean = false,
@@ -50,6 +57,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val ACTION_USB_PERMISSION = "com.efocusor.android.USB_PERMISSION"
+        private const val KEY_NAMED_POSITIONS = "namedPositions"
         private const val POLL_INTERVAL_MS = 400L
         private const val INFO_EVERY_POLLS = 8          // ~3.2 s
         private const val WHEEL_SEND_MIN_INTERVAL_MS = 120L
@@ -72,6 +80,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _usbDevices = MutableStateFlow<List<UsbDeviceEntry>>(emptyList())
     val usbDevices: StateFlow<List<UsbDeviceEntry>> = _usbDevices.asStateFlow()
+
+    private val _namedPositions = MutableStateFlow(loadNamedPositions())
+    val namedPositions: StateFlow<List<NamedPosition>> = _namedPositions.asStateFlow()
 
     var connection: FocuserConnection? = null
         private set
@@ -404,6 +415,72 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun navigate(screen: Screen) {
         _ui.update { it.copy(screen = screen) }
         if (screen == Screen.Settings) refreshInfo()
+    }
+
+    // ------------------------------------------------------------------ named positions
+
+    fun upsertNamedPosition(existingId: Long?, name: String, position: Long) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val clamped = position.coerceIn(0, 99_999_999)
+        val next = if (existingId == null) {
+            _namedPositions.value + NamedPosition(
+                id = System.currentTimeMillis(),
+                name = trimmed,
+                position = clamped,
+            )
+        } else {
+            _namedPositions.value.map {
+                if (it.id == existingId) it.copy(name = trimmed, position = clamped) else it
+            }
+        }
+        _namedPositions.value = next
+        saveNamedPositions(next)
+    }
+
+    /** Re-save an entry to the focuser's current position (quick re-calibration). */
+    fun updateNamedPositionToCurrent(id: Long) {
+        val pos = _ui.value.info.position
+        val next = _namedPositions.value.map { if (it.id == id) it.copy(position = pos) else it }
+        _namedPositions.value = next
+        saveNamedPositions(next)
+        _messages.tryEmit("已更新为当前位置 $pos")
+    }
+
+    fun deleteNamedPosition(id: Long) {
+        val next = _namedPositions.value.filterNot { it.id == id }
+        _namedPositions.value = next
+        saveNamedPositions(next)
+    }
+
+    private fun loadNamedPositions(): List<NamedPosition> {
+        val raw = prefs.getString(KEY_NAMED_POSITIONS, null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                NamedPosition(
+                    id = o.optLong("id"),
+                    name = o.optString("name"),
+                    position = o.optLong("position"),
+                )
+            }.filter { it.name.isNotBlank() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveNamedPositions(list: List<NamedPosition>) {
+        val arr = org.json.JSONArray()
+        list.forEach { np ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("id", np.id)
+                    .put("name", np.name)
+                    .put("position", np.position)
+            )
+        }
+        prefs.edit().putString(KEY_NAMED_POSITIONS, arr.toString()).apply()
     }
 
     // ------------------------------------------------------------------ helpers

@@ -152,6 +152,9 @@ Behavior decisions to preserve:
 - USB serial defaults to 9600 baud (matches `Serial.begin(9600)` in the sketch).
 - Long `I#` polling is deferred while moving, matching the firmware 1105
   cooperative-reply design used by the native INDI driver.
+- Named positions (camera/eyepiece presets) are stored in app-side
+  SharedPreferences, not the firmware web-API memory slots, so they work over
+  USB serial too.
 - The app never sends `D` on connect (unlike the ASCOM driver); the firmware
   keeps its own `maxSteps`. `D`/`X`/`A`/`R`/`C`/`T` writes live in the settings
   screen only.
