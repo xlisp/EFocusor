@@ -122,20 +122,23 @@ abstract class FramedConnection : FocuserConnection {
 
 /** USB serial via usb-serial-for-android (CH340/CH9102, CP210x, FTDI, PL2303, CDC). */
 class UsbSerialFocuserConnection(
+    private val manager: UsbManager,
+    private val device: android.hardware.usb.UsbDevice,
     private val port: UsbSerialPort,
     private val baud: Int,
 ) : FramedConnection() {
 
-    override val label: String = "USB ${port.javaClass.simpleName.replace("Driver", "")} @ $baud"
+    override val label: String = "USB ${device.productName ?: "serial"} @ $baud"
 
     override fun doOpen() {
-        port.open(UsbSerialPort.FLOW_CONTROL_OFF)
+        val connection = manager.openDevice(device)
+            ?: throw IOException("no permission or device gone: ${device.deviceName}")
+        port.open(connection)
         // Leave DTR/RTS deasserted: asserting them resets Wemos/NodemCU
         // boards through the CH340 auto-program circuit.
         port.dtr = false
         port.rts = false
-        port.baudRate = baud
-        port.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+        port.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
     }
 
     override fun doClose() {

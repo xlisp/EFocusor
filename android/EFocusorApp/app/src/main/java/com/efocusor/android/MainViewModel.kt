@@ -137,7 +137,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             requestUsbPermission(entry)
             return
         }
-        connect { UsbSerialFocuserConnection(entry.port, baud) }
+        connect { UsbSerialFocuserConnection(manager, entry.device, entry.port, baud) }
     }
 
     fun connectTcp(host: String, port: Int) {
