@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class Screen { Connect, Control, Settings }
 
@@ -37,17 +37,14 @@ data class UiState(
     val screen: Screen = Screen.Connect,
     val connecting: Boolean = false,
     val connectedLabel: String? = null,
-    val info: FocuserUserInfo = FocuserUserInfo(),
-    /** Steps shown while the wheel is being dragged, null when idle. */
+    val info: FocuserInfo = FocuserInfo(),
+    /** Steps accumulated while the wheel is being dragged, null when idle. */
     val wheelDelta: Long? = null,
     val commWarnings: Int = 0,
     val nightMode: Boolean = false,
     val wheelStepsPerTurn: Int = 1000,
     val invertWheel: Boolean = false,
 )
-
-// Mirrors FocuserInfo so Compose sees a single stable object.
-typealias FocuserUserInfo = FocuserInfo? // kept nullable-free below via default instance
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -80,12 +77,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     private var pollJob: Job? = null
-    private val commWarnings = AtomicLong(0)
+    private val commWarnings = AtomicInteger(0)
 
     /** Last commanded absolute target, or null when the motor is settled. */
     private var commandedTarget: Long? = null
+
+    // Wheel drag session state
     private var wheelActive = false
-    private var wheelAccumulated = 0L
+    private var wheelStartBase = 0L     // absolute target when the drag began
+    private var wheelAccumulated = 0L   // raw signed steps since drag began (pre-invert)
     private var wheelLastSentAt = 0L
     private var wheelLastSentTarget = 0L
 
@@ -93,12 +93,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            if (granted) {
-                refreshUsbDevices()
-                _messages.tryEmit("USB 权限已授予")
-            } else {
-                _messages.tryEmit("USB 权限被拒绝")
-            }
+            refreshUsbDevices()
+            _messages.tryEmit(if (granted) "USB 权限已授予" else "USB 权限被拒绝")
         }
     }
 
@@ -130,34 +126,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Intent(ACTION_USB_PERMISSION).setPackage(getApplication<Application>().packageName),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        manager.requestPermission((entry.port as? com.hoho.android.usbserial.driver.UsbSerialDriver)?.device, intent)
+        manager.requestPermission(entry.device, intent)
     }
 
     // ------------------------------------------------------------------ connect
 
     fun connectUsb(entry: UsbDeviceEntry, baud: Int) {
         val manager = UsbDeviceRegistry.manager(getApplication())
-        val device = (entry.port as? com.hoho.android.usbserial.driver.UsbSerialDriver)?.device
-        if (device != null && !manager.hasPermission(device)) {
+        if (!manager.hasPermission(entry.device)) {
             requestUsbPermission(entry)
             return
         }
-        connect(UsbSerialFocuserConnection(entry.port, baud))
+        connect { UsbSerialFocuserConnection(entry.port, baud) }
     }
 
     fun connectTcp(host: String, port: Int) {
-        connect(TcpFocuserConnection(host.trim(), port))
+        connect { TcpFocuserConnection(host.trim(), port) }
     }
 
-    private fun connect(factory: () -> FocuserConnection) {
+    private fun connect(make: () -> FocuserConnection) {
         if (_ui.value.connecting || connection != null) return
         _ui.update { it.copy(connecting = true) }
         viewModelScope.launch {
             val conn = try {
-                withContext(Dispatchers.IO) { factory().also { it.open() } }
+                withContext(Dispatchers.IO) { make().also { it.open() } }
             } catch (e: Exception) {
                 _ui.update { it.copy(connecting = false) }
-                _messages.emit("连接失败: ${e.message}")
+                _messages.emit("连接失败: ${e.message ?: e.javaClass.simpleName}")
                 return@launch
             }
             connection = conn
@@ -167,11 +162,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(connecting = false, connectedLabel = conn.label, screen = Screen.Control)
             }
             val version = runCatching { send("V") }.getOrNull()
-            if (version != null && !FocuserProtocol.isErr(version)) {
-                _messages.emit("已连接 $version")
-            } else {
-                _messages.emit("已连接 ${conn.label}")
-            }
+            _messages.emit(
+                if (version != null && !FocuserProtocol.isErr(version)) {
+                    "已连接 ${conn.label} · $version"
+                } else {
+                    "已连接 ${conn.label}"
+                }
+            )
             startPolling()
         }
     }
@@ -182,14 +179,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         wheelActive = false
         wheelAccumulated = 0
         commandedTarget = null
-        connection?.let { c -> runCatching { withContext2 { c.close() } } }
+        connection?.let { c -> runCatching { c.close() } }
         connection = null
         _ui.update {
             UiState(
                 nightMode = it.nightMode,
                 wheelStepsPerTurn = it.wheelStepsPerTurn,
                 invertWheel = it.invertWheel,
-            ).copy(screen = Screen.Connect)
+            )
         }
         if (!silent) _messages.tryEmit("已断开")
     }
@@ -230,21 +227,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun onCommOk(position: Long? = null, moving: Boolean? = null) {
         commWarnings.set(0)
         _ui.update { st ->
-            val info = st.info
             st.copy(
                 commWarnings = 0,
-                info = if (position != null || moving != null) info.copy(
-                    position = position ?: info.position,
-                    isMoving = moving ?: info.isMoving,
-                    target = commandedTarget ?: info.target,
-                ) else info,
+                info = if (position != null || moving != null) {
+                    st.info.copy(
+                        position = position ?: st.info.position,
+                        isMoving = moving ?: st.info.isMoving,
+                        target = commandedTarget ?: st.info.target,
+                    )
+                } else st.info,
             )
         }
     }
 
     private fun onCommFail() {
         val n = commWarnings.incrementAndGet()
-        _ui.update { it.copy(commWarnings = n.toInt()) }
+        _ui.update { it.copy(commWarnings = n) }
         if (n >= MAX_COMM_WARNINGS) {
             _messages.tryEmit("通信多次失败,已断开")
             disconnect(silent = true)
@@ -254,8 +252,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------------ motion
 
     fun moveBy(delta: Long) {
-        val st = _ui.value
-        val base = commandedTarget ?: st.info.position
+        val base = commandedTarget ?: _ui.value.info.position
         moveToInternal(base + delta)
     }
 
@@ -270,8 +267,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (reply == null) {
                 onCommFail()
             } else if (FocuserProtocol.isErr(reply)) {
-                _messages.emit("移动失败: ${FocuserProtocol.errText(reply)}")
                 commandedTarget = null
+                _messages.emit("移动失败: ${FocuserProtocol.errText(reply)}")
             } else {
                 FocuserProtocol.parseStatus(reply)?.let { onCommOk(it.position, it.isMoving) } ?: onCommOk()
             }
@@ -310,17 +307,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun wheelBegin() {
         wheelActive = true
         wheelAccumulated = 0
-        wheelLastSentTarget = commandedTarget ?: _ui.value.info.position
-        _ui.update { it.copy(wheelDelta = 0) }
+        wheelStartBase = commandedTarget ?: _ui.value.info.position
+        wheelLastSentTarget = wheelStartBase
+        _ui.update { it.copy(wheelDelta = 0L) }
     }
 
-    /** Incremental steps since the previous call; throttled absolute retargeting. */
+    /** Raw (pre-invert) signed steps accumulated since drag start, reported incrementally. */
     fun wheelDelta(deltaSteps: Long) {
         if (!wheelActive) return
         wheelAccumulated += deltaSteps
-        val sign = if (_ui.value.invertWheel) -1 else 1
-        val base = commandedTarget ?: _ui.value.info.position
-        val target = (base + wheelAccumulated * sign).coerceIn(0, _ui.value.info.maxSteps)
+        val sign = if (_ui.value.invertWheel) -1L else 1L
+        val target = (wheelStartBase + wheelAccumulated * sign).coerceIn(0, _ui.value.info.maxSteps)
         _ui.update { it.copy(wheelDelta = wheelAccumulated * sign) }
         val now = System.currentTimeMillis()
         if (target != wheelLastSentTarget && now - wheelLastSentAt >= WHEEL_SEND_MIN_INTERVAL_MS) {
@@ -337,25 +334,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun wheelEnd() {
         if (!wheelActive) return
         wheelActive = false
-        val sign = if (_ui.value.invertWheel) -1 else 1
-        val base = commandedTarget ?: _ui.value.info.position
-        val target = (base + wheelAccumulated * sign).coerceIn(0, _ui.value.info.maxSteps)
-        val total = wheelAccumulated * sign
+        val sign = if (_ui.value.invertWheel) -1L else 1L
+        val target = (wheelStartBase + wheelAccumulated * sign).coerceIn(0, _ui.value.info.maxSteps)
+        val sentFull = target == wheelLastSentTarget && commandedTarget == target
         wheelAccumulated = 0
         _ui.update { it.copy(wheelDelta = null) }
-        viewModelScope.launch {
-            if (total != 0L && target != commandedTarget) {
-                commandedTarget = target
+        if (sentFull) return
+        if (target != wheelStartBase) {
+            commandedTarget = target
+            viewModelScope.launch {
                 val reply = runCatching { send("M $target") }.getOrNull()
                 if (reply == null) onCommFail()
                 else FocuserProtocol.parseStatus(reply)?.let { onCommOk(it.position, it.isMoving) } ?: onCommOk()
             }
+        } else {
+            commandedTarget = null
         }
     }
 
     // ------------------------------------------------------------------ settings
 
-    fun writeSetting(command: String, okPrefix: Char, onDone: (Boolean) -> Unit) {
+    fun writeSetting(command: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
             val reply = runCatching { send(command) }.getOrNull()
             when {
@@ -414,14 +413,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         conn.transceive(command)
     }
 
-    private fun withContext2(block: () -> Unit) {
-        // close() is quick; run inline inside the synchronized transport
-        runCatching { block() }
-    }
-
+    /** Volume rocker acts as fine focus while the control screen is open. */
     fun volumeKey(up: Boolean) {
         if (connection == null || _ui.value.screen != Screen.Control) return
-        val step = 10L
-        moveBy(if (up) step else -step)
+        moveBy(if (up) 10L else -10L)
     }
 }
