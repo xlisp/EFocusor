@@ -12,6 +12,11 @@ This repository contains firmware, ASCOM driver code, and test utilities for the
   - ASCOM .NET Framework focuser driver source implementing `IFocuserV3`.
 - `driver/FocuserTest/`
   - Simple Windows Forms test client using ASCOM DriverAccess.
+- `android/EFocusorApp/`
+  - Native Android control app (Kotlin + Jetpack Compose): USB OTG serial
+    (CH340/CP210x/FTDI/PL2303/CDC via usb-serial-for-android) or WiFi TCP,
+    simulated focus-wheel drag control, quick ±10/±100/±1000 moves, night
+    mode, and full device settings via the text protocol.
 
 ## Fixed Public Identities
 
@@ -125,3 +130,34 @@ Build environment:
 3. Status polling: `G#` → `P <pos>;M <moving>#`.
 4. Move: `M <target>#` → firmware moves stepper.
 5. Temperature: `E <temp*100>#` to update, `T <coeff*1000>#` to set coefficient.
+
+## Android App Notes
+
+Primary sources under `android/EFocusorApp/app/src/main/java/com/efocusor/android/`:
+
+- `connection/FocuserConnection.kt` — `FramedConnection` base implementing the
+  `#`-terminated request/reply framing shared by `UsbSerialFocuserConnection`
+  (usb-serial-for-android, DTR/RTS left deasserted so CH340 auto-program does
+  not reset the ESP8266) and `TcpFocuserConnection` (port 4030).
+- `connection/FocuserProtocol.kt` — parsers for `P <pos>;M <moving>` status
+  frames and the `I#` JSON document.
+- `MainViewModel.kt` — 400 ms `G#` polling; `I#` refresh only while stationary;
+  wheel drags send throttled (~120 ms) absolute `M` retargets.
+
+Behavior decisions to preserve:
+
+- USB serial defaults to 9600 baud (matches `Serial.begin(9600)` in the sketch).
+- Long `I#` polling is deferred while moving, matching the firmware 1105
+  cooperative-reply design used by the native INDI driver.
+- The app never sends `D` on connect (unlike the ASCOM driver); the firmware
+  keeps its own `maxSteps`. `D`/`X`/`A`/`R`/`C`/`T` writes live in the settings
+  screen only.
+- `tools/mock_focuser.py` is a mock TCP firmware for end-to-end app testing:
+  `adb reverse tcp:4030 tcp:4030`, connect to `127.0.0.1:4030` from the app.
+
+Build:
+
+- JDK 17+, Android SDK 35. `./gradlew assembleDebug` (Gradle 8.11.1 wrapper,
+  Aliyun mirrors configured in `settings.gradle.kts`; local Gradle at
+  `~/tools/dl-gradle/gradle-8.11.1`).
+- APK output: `android/EFocusorApp/app/build/outputs/apk/debug/app-debug.apk`.
