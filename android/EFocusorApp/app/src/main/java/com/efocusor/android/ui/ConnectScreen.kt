@@ -110,9 +110,14 @@ fun ConnectScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        "未检测到 USB 串口设备。\n\n请用 OTG 线把调焦器(Wemos D1 mini / NodeMCU 的 USB 口)接到手机,然后点下面的“重新扫描”。",
+                        "未检测到 USB 串口设备。\n\n" +
+                            "① 确认用的是数据线,不是纯充电线\n" +
+                            "② Type-C 对 Type-C 直连不行是常见问题:很多 ESP8266 开发板的 Type-C 口缺少 CC 识别电阻,手机根本不会进入 OTG 模式。改用 手机C口 → C转A OTG转接头 → A转C数据线 → 调焦器 即可\n" +
+                            "③ 插上后手机应有“USB 设备”提示音/通知;完全无反应=OTG 未识别(线或板子问题),不是 App 问题\n\n" +
+                            "接好后点下方“重新扫描”。",
                         modifier = Modifier.padding(16.dp),
                         fontSize = 13.sp,
+                        lineHeight = 19.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

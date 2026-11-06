@@ -203,20 +203,63 @@ data class UsbDeviceEntry(
 object UsbDeviceRegistry {
     fun list(context: Context): List<UsbDeviceEntry> {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val drivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager)
-        return drivers.flatMap { driver ->
+        val entries = mutableListOf<UsbDeviceEntry>()
+        val covered = HashSet<String>()
+
+        UsbSerialProber.getDefaultProber().findAllDrivers(manager).forEach { driver ->
             val device = driver.device
+            covered.add(device.deviceName)
             val name = "${device.manufacturerName ?: "?"} ${device.productName ?: ""}".trim()
-                .ifEmpty { driver.javaClass.simpleName }
-            driver.ports.map { port ->
-                UsbDeviceEntry(
-                    device = device,
-                    displayName = name,
-                    hasPermission = manager.hasPermission(device),
-                    port = port,
+                .ifEmpty { driver.javaClass.simpleName.removeSuffix("SerialDriver") }
+            driver.ports.forEach { port ->
+                entries.add(
+                    UsbDeviceEntry(
+                        device = device,
+                        displayName = name,
+                        hasPermission = manager.hasPermission(device),
+                        port = port,
+                    )
                 )
             }
         }
+
+        // Devices outside the probe table: guess a driver so unusual
+        // CH340/CH343/CH9102 PIDs and CDC-ACM boards can still be opened.
+        manager.deviceList.values
+            .filter { it.deviceName !in covered }
+            .forEach { device ->
+                val driver = when {
+                    device.vendorId == 0x1A86 ->
+                        com.hoho.android.usbserial.driver.Ch34xSerialDriver(device)
+                    hasCdcInterface(device) ->
+                        com.hoho.android.usbserial.driver.CdcAcmSerialDriver(device)
+                    else -> null
+                } ?: return@forEach
+                val port = driver.ports.firstOrNull() ?: return@forEach
+                entries.add(
+                    UsbDeviceEntry(
+                        device = device,
+                        displayName = "VID %04X/PID %04X · 未识别ID,按 %s 尝试".format(
+                            device.vendorId, device.productId, driver.javaClass.simpleName.removeSuffix("SerialDriver"),
+                        ),
+                        hasPermission = manager.hasPermission(device),
+                        port = port,
+                    )
+                )
+            }
+
+        return entries
+    }
+
+    private fun hasCdcInterface(device: android.hardware.usb.UsbDevice): Boolean {
+        for (i in 0 until device.interfaceCount) {
+            if (device.getInterface(i).interfaceClass ==
+                android.hardware.usb.UsbConstants.USB_CLASS_COMM
+            ) {
+                return true
+            }
+        }
+        return false
     }
 
     fun manager(context: Context): UsbManager =

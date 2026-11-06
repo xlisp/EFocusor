@@ -138,7 +138,10 @@ Primary sources under `android/EFocusorApp/app/src/main/java/com/efocusor/androi
 - `connection/FocuserConnection.kt` — `FramedConnection` base implementing the
   `#`-terminated request/reply framing shared by `UsbSerialFocuserConnection`
   (usb-serial-for-android, DTR/RTS left deasserted so CH340 auto-program does
-  not reset the ESP8266) and `TcpFocuserConnection` (port 4030).
+  not reset the ESP8266) and `TcpFocuserConnection` (port 4030). Device
+  enumeration falls back to the CH34x driver for WCH vendor IDs and CDC-ACM
+  for CDC-class devices when the probe table has no match (CH9102 PID 0x55D4
+  is missing from usb-serial-for-android 3.7.0).
 - `connection/FocuserProtocol.kt` — parsers for `P <pos>;M <moving>` status
   frames and the `I#` JSON document.
 - `MainViewModel.kt` — 400 ms `G#` polling; `I#` refresh only while stationary;
